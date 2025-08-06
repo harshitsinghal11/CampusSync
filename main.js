@@ -1,3 +1,4 @@
+
 // Import Firebase modules
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js';
 import {
@@ -15,10 +16,7 @@ import {
     query,
     orderBy,
     onSnapshot,
-    serverTimestamp,
-    where,
-    getDocs,
-    Timestamp
+    serverTimestamp
 } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js';
 
 // Firebase configuration - Replace with your actual config
@@ -31,6 +29,7 @@ const firebaseConfig = {
     appId: "1:426590324255:web:df1a14abae24f6e52b772a",
     measurementId: "G-8FW6DF5P54"
 };
+
 
 // Check if Firebase config is still placeholder
 if (firebaseConfig.apiKey === "AIzaSyExample-replace-with-your-actual-api-key") {
@@ -228,73 +227,6 @@ function getErrorMessage(errorCode) {
     }
 }
 
-// NEW: Check daily item limit function
-async function checkDailyItemLimit(userId) {
-    const now = new Date();
-    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    const tomorrow = new Date(today);
-    tomorrow.setDate(tomorrow.getDate() + 1);
-
-    console.log('Checking daily limit for user:', userId);
-    console.log('Today range:', today, 'to', tomorrow);
-
-    try {
-        const q = query(
-            collection(db, 'marketplace'),
-            where('sellerId', '==', userId),
-            where('timestamp', '>=', Timestamp.fromDate(today)),
-            where('timestamp', '<', Timestamp.fromDate(tomorrow))
-        );
-
-        const querySnapshot = await getDocs(q);
-        const count = querySnapshot.size;
-        
-        console.log('Items posted today:', count);
-        console.log('Items found:', querySnapshot.docs.map(doc => ({
-            id: doc.id,
-            timestamp: doc.data().timestamp?.toDate(),
-            title: doc.data().title
-        })));
-        
-        return count;
-    } catch (error) {
-        console.error('Error checking daily limit:', error);
-        // Return a high number to prevent posting on error (fail-safe)
-        return 999;
-    }
-}
-
-// NEW: Update add item button state based on daily limit
-async function updateAddItemButtonState() {
-    if (!currentUser) return;
-
-    console.log('Updating add item button state...');
-    const todayItemCount = await checkDailyItemLimit(currentUser.uid);
-    const addItemBtn = document.querySelector('.add-item-btn');
-    
-    console.log('Today item count for button update:', todayItemCount);
-    
-    if (todayItemCount >= 1) {
-        console.log('Disabling add item button - daily limit reached');
-        addItemBtn.disabled = true;
-        addItemBtn.innerHTML = '🚫 Daily Limit Reached (1/1)';
-        addItemBtn.style.background = '#dc3545';
-        addItemBtn.style.cursor = 'not-allowed';
-        addItemBtn.style.opacity = '0.7';
-        addItemBtn.onclick = () => {
-            alert('❌ Daily Limit Reached!\n\nYou can only post 1 item per day to prevent spam.\nYou have already posted your item for today.\n\nTry again tomorrow at midnight!');
-        };
-    } else {
-        console.log('Enabling add item button - can still post today');
-        addItemBtn.disabled = false;
-        addItemBtn.innerHTML = '➕ Add Item (0/1)';
-        addItemBtn.style.background = 'linear-gradient(135deg, #667eea, #764ba2)';
-        addItemBtn.style.cursor = 'pointer';
-        addItemBtn.style.opacity = '1';
-        addItemBtn.onclick = openAddItemModal;
-    }
-}
-
 // Chat Functions
 function initializeChat() {
     const chatMessages = document.getElementById('chat-messages');
@@ -456,32 +388,16 @@ function initializeMarketplace() {
     const addItemForm = document.getElementById('add-item-form');
     const addItemBtn = document.getElementById('add-item-btn');
 
-    // Check and update add item button state on initialization
-    updateAddItemButtonState();
-
     // Category filter handler
+    // Category filter handler - directly connected
     categoryFilter.addEventListener('change', (e) => {
         const selectedCategory = e.target.value;
         displayMarketplaceItems(window.allMarketplaceItems, selectedCategory);
     });
     window.allMarketplaceItems = [];
-
-    // Add item form handler with daily limit check
+    // Add item form handler
     addItemForm.addEventListener('submit', async (e) => {
         e.preventDefault();
-
-        console.log('Form submitted, checking daily limit...');
-        
-        // STRICT daily limit check before proceeding
-        const todayItemCount = await checkDailyItemLimit(currentUser.uid);
-        console.log('Current daily item count:', todayItemCount);
-        
-        if (todayItemCount >= 1) {
-            alert(`❌ Daily Limit Exceeded!\n\nYou have already posted ${todayItemCount} item(s) today.\nYou can only post 1 item per day to prevent spam.\n\nPlease try again tomorrow!`);
-            closeAddItemModal();
-            updateAddItemButtonState();
-            return;
-        }
 
         const title = document.getElementById('item-title').value.trim();
         const price = parseFloat(document.getElementById('item-price').value);
@@ -494,24 +410,9 @@ function initializeMarketplace() {
             return;
         }
 
-        if (price <= 0) {
-            alert('Please enter a valid price greater than 0.');
-            return;
-        }
-
         setLoading(addItemBtn, true);
 
         try {
-            // Final check before adding to database
-            const finalCheck = await checkDailyItemLimit(currentUser.uid);
-            if (finalCheck >= 1) {
-                alert('❌ Another item was posted while you were filling the form. Daily limit reached!');
-                closeAddItemModal();
-                updateAddItemButtonState();
-                return;
-            }
-
-            console.log('Adding item to database...');
             await addDoc(collection(db, 'marketplace'), {
                 title,
                 price,
@@ -522,29 +423,18 @@ function initializeMarketplace() {
                 sellerEmail: currentUser.email,
                 sellerName: currentUser.displayName || currentUser.email.split('@')[0],
                 timestamp: serverTimestamp(),
-                status: 'active',
-                dateCreated: new Date().toISOString() // Additional date field for debugging
+                status: 'active'
             });
 
-            console.log('Item added successfully!');
-            
             // Reset form and close modal
             addItemForm.reset();
             closeAddItemModal();
-            showSuccess('✅ Item added successfully! Daily limit reached - you can post again tomorrow.');
-            
-            // Force update button state
-            setTimeout(() => {
-                updateAddItemButtonState();
-            }, 1000);
-            
+            showSuccess('Item added successfully! It will appear in the marketplace.');
         } catch (error) {
             console.error('Error adding item:', error);
             let errorMsg = 'Failed to add item. ';
             if (error.code === 'permission-denied') {
                 errorMsg += 'Please check Firestore security rules.';
-            } else if (error.code === 'unavailable') {
-                errorMsg += 'Please check your internet connection.';
             } else if (firebaseConfig.apiKey === "AIzaSyExample-replace-with-your-actual-api-key") {
                 errorMsg += 'Firebase configuration is not set up properly.';
             } else {
@@ -582,9 +472,6 @@ function initializeMarketplace() {
 
         // Display items with current filter applied
         displayMarketplaceItems(items, currentFilter);
-        
-        // Update add item button state when marketplace updates
-        updateAddItemButtonState();
     });
 }
 
@@ -669,21 +556,7 @@ function filterItems(category) {
 }
 
 // Modal Functions
-window.openAddItemModal = async () => {
-    console.log('Attempting to open add item modal...');
-    
-    // STRICT check daily limit before opening modal
-    const todayItemCount = await checkDailyItemLimit(currentUser.uid);
-    console.log('Daily limit check result:', todayItemCount);
-    
-    if (todayItemCount >= 1) {
-        console.log('Blocking modal - daily limit exceeded');
-        alert('❌ Daily Limit Reached!\n\nYou can only post 1 item per day to prevent spam.\nYou have already posted your daily item.\n\nCome back tomorrow to post another item!');
-        updateAddItemButtonState(); // Update button state
-        return;
-    }
-    
-    console.log('Opening modal - limit not exceeded');
+window.openAddItemModal = () => {
     document.getElementById('add-item-modal').classList.add('active');
     document.body.style.overflow = 'hidden';
 };
@@ -738,11 +611,6 @@ window.showSection = (sectionName) => {
 
     // Close mobile menu
     document.getElementById('sidebar').classList.remove('mobile-open');
-    
-    // Update add item button state when marketplace section is shown
-    if (sectionName === 'marketplace') {
-        updateAddItemButtonState();
-    }
 };
 
 window.toggleMobileMenu = () => {
